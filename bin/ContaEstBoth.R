@@ -90,6 +90,7 @@ rownames(freqs)<-NULL
 #
 
 message("Reading counts... ")
+print(countsname)
 counts<-read.table(pipe(paste0("grep 'counts' ", countsname)), as.is=T)
 
 # change to absolute positions:
@@ -234,7 +235,7 @@ TwoConsmLL<-function(conta){
 }
 
 est2<-optim(0.25, TwoConsmLL, lower=c(0.000000000001), upper=c(1-0.000000000001), method="Brent")$par
-
+print(est2)
 message("Jackknife for two-cns... ")
 #get s.e. and 95 CI
 
@@ -272,6 +273,41 @@ s<-sqrt(((nsites-1)/nsites)*(sum((jke-est2)^2)))
 
 upper2<-est2+qnorm(1-(.05)/2)*s
 lower2<-est2-qnorm(1-(.05)/2)*s
+
+message("Bootstraping for two-cns... ")
+#get s.e. and 95 CI
+
+nsites<-nrow(cnstable)
+
+#jk estimate array
+
+bootstrap<-unlist(foreach(i=1:100) %dopar%{
+  bootstraped_site = sample(1:nsites, nsites, replace=T)
+  currcnstable<-cnstable[bootstraped_site, ]
+  TwoConsmLL<-function(conta){
+    #use frq of the alt allele (not ref)
+    fis<-(conta*currcnstable[,6]*(1-((4/3)* MMrate)))+MMrate
+    #currcnstable[,2] is the number of non-ref alleles
+    probs<-(choose((currcnstable[,1]+currcnstable[,2]), currcnstable[,2])*(fis^currcnstable[,2])*((1-fis)^currcnstable[,1]))/2
+    #use frq of the ref allele (not alt)
+    fisinv<-(conta*currcnstable[,5]*(1-((4/3)* MMrate)))+MMrate
+    #currcnstable[,4] is the number of non-alt bases
+    probsinv<-(choose((currcnstable[,3]+currcnstable[,4]), currcnstable[,4])*(fisinv^currcnstable[,4])*((1-fisinv)^currcnstable[,3]))/2
+    probs<-log(probs+probsinv)
+    return(-sum(probs))
+  }
+  optim(0.25, TwoConsmLL, lower=c(0.000000000001), upper=c(1-0.000000000001), method="Brent")$par
+})
+
+#get sigma and upper & lower bounds for 95%CI
+
+bootstrap = sort(bootstrap)
+png("bootstrap.png")
+hist(bootstrap,xlab = "Contamination fraction",ylab = "Frequency")
+dev.off()
+upper2_bst<-bootstrap[95]
+lower2_bst<-bootstrap[5]
+
 
 ##################
 #one-cns method, only if the user requires it
@@ -333,7 +369,10 @@ lower1<-est1-qnorm(1-(.05)/2)*s
 if(doOneCns==0){
 	writeLines(paste(sep="\t", "Two-cns", est2, lower2, upper2, MMrate, nrow(cnstable)), con= outfilename)
 }else{
-	writeLines(c(paste(sep="\t", "One-cns", est1, lower1, upper1, MMrate, nrow(cnstable)), paste(sep="\t", "Two-cns", est2, lower2, upper2, MMrate, nrow(cnstable))), con= outfilename)
+	writeLines(c(paste(sep="\t", "One-cns", est1, lower1, upper1, MMrate, nrow(cnstable)),
+	             paste(sep="\t", "Two-cns-jke", est2, lower2, upper2, MMrate, nrow(cnstable)),
+	             paste(sep="\t", "Two-cns-bst", est2, lower2_bst, upper2_bst, MMrate, nrow(cnstable))
+	             ), con= outfilename)
 }
 
 #print an intermediate warning
